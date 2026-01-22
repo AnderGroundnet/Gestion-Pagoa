@@ -488,8 +488,8 @@
         // ============================================
         // CONFIGURACIÓN SUPABASE
         // ============================================
-        const SUPABASE_URL = 'https://your-project.supabase.co';
-        const SUPABASE_KEY = 'your-anon-key';
+        const SUPABASE_URL = 'https://cdtfvtzvzcblviqodkhu.supabase.co';
+        const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNkdGZ2dHp2emNibHZpcW9ka2h1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkwODYyOTEsImV4cCI6MjA4NDY2MjI5MX0.zDIxrRFAl_d3nvTinfeUYYEHMmgMBWoebqbsTbaBc-g';
         
         // Inicializar cliente Supabase
         const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
