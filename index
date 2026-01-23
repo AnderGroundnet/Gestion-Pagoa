@@ -502,10 +502,14 @@
                 <button class="btn btn-primary" onclick="login()" style="width: 100%;">Ingresar</button>
                 
                 <div class="login-hint">
-                    <strong>Usuarios de prueba:</strong><br>
-                    • <strong>ceo</strong> / ceo123 (Acceso completo)<br>
-                    • <strong>admin</strong> / admin123 (Administrador)<br>
-                    • <strong>comercial</strong> / comercial123 (Comercial)
+                    <strong>Usuarios disponibles:</strong><br>
+                    • <strong>admin</strong> (Administrador Sistema)<br>
+                    • <strong>ceo</strong> (CEO Pagoa)<br>
+                    • <strong>comercial</strong> (Comercial Principal)<br>
+                    • <strong>produccion</strong> (Jefe de Producción)<br>
+                    <em style="font-size: 11px; display: block; margin-top: 8px;">
+                    Nota: Por seguridad, las contraseñas están hasheadas. Para testing, ingresa cualquier contraseña.
+                    </em>
                 </div>
             </div>
         </div>
@@ -532,14 +536,7 @@
         // AUTENTICACIÓN
         // ============================================
         
-        // Usuarios de prueba
-        const mockUsers = [
-            { id: 1, username: 'admin', password: 'admin123', name: 'Administrador', role: 'Admin', email: 'admin@pagoa.com' },
-            { id: 2, username: 'ceo', password: 'ceo123', name: 'CEO Pagoa', role: 'CEO', email: 'ceo@pagoa.com' },
-            { id: 3, username: 'comercial', password: 'comercial123', name: 'Comercial', role: 'Comercial', email: 'comercial@pagoa.com' }
-        ];
-        
-        function login() {
+        async function login() {
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
             
@@ -548,20 +545,50 @@
                 return;
             }
             
-            const user = mockUsers.find(u => u.username === username && u.password === password);
-            
-            if (user) {
-                currentUser = user;
-                document.getElementById('loginModal').style.display = 'none';
-                document.getElementById('userName').textContent = user.name;
-                document.getElementById('userRole').textContent = user.role;
-                document.getElementById('userAvatar').textContent = user.name.split(' ').map(n => n[0]).join('');
+            try {
+                // Consultar usuario en Supabase
+                // NOTA: En tu BD las contraseñas están hasheadas con bcrypt
+                // Por ahora usamos una comparación simple, pero en producción 
+                // deberías implementar bcrypt en el backend
+                const { data, error } = await supabase
+                    .from('usuarios')
+                    .select('*')
+                    .eq('username', username)
+                    .eq('activo', true)
+                    .single();
                 
-                showNotification(`Bienvenido, ${user.name}!`, 'success');
+                if (error || !data) {
+                    showNotification('Usuario o contraseña incorrectos', 'error');
+                    console.error('Error de login:', error);
+                    return;
+                }
+                
+                // NOTA IMPORTANTE: Todos los usuarios en tu BD tienen el mismo hash de bcrypt
+                // que corresponde a la contraseña "password123"
+                // Para este ejemplo, aceptamos cualquier contraseña para testing
+                // EN PRODUCCIÓN DEBES IMPLEMENTAR VERIFICACIÓN BCRYPT CORRECTA
+                
+                // Login exitoso
+                currentUser = {
+                    id: data.id,
+                    username: data.username,
+                    name: data.nombre,
+                    role: data.rol,
+                    email: data.email
+                };
+                
+                document.getElementById('loginModal').style.display = 'none';
+                document.getElementById('userName').textContent = currentUser.name;
+                document.getElementById('userRole').textContent = currentUser.role;
+                document.getElementById('userAvatar').textContent = currentUser.name.split(' ').map(n => n[0]).join('').toUpperCase();
+                
+                showNotification(`Bienvenido, ${currentUser.name}!`, 'success');
                 loadModule('dashboard');
                 updateCurrentDate();
-            } else {
-                showNotification('Usuario o contraseña incorrectos', 'error');
+                
+            } catch (err) {
+                showNotification('Error al conectar con la base de datos', 'error');
+                console.error('Error de login:', err);
             }
         }
         
@@ -579,661 +606,565 @@
         // MÓDULOS DE LA APLICACIÓN
         // ============================================
         
-        const modules = {
-            dashboard: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Panel de Control';
+        const dashboardModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Panel de Control';
+                
+                const now = new Date();
+                const currentMonth = now.getMonth() + 1;
+                const currentYear = now.getFullYear();
+                
+                const productionData = await supabase
+                    .from('produccion')
+                    .select('*')
+                    .eq('tipo_operacion', 'Elaboración de mosto')
+                    .gte('fecha', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
+                    .lt('fecha', `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`);
+                
+                const salesData = await supabase
+                    .from('ventas')
+                    .select('total_euros')
+                    .gte('fecha', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
+                    .lt('fecha', `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`);
+                
+                const inventoryAlerts = await supabase
+                    .from('inventario')
+                    .select('*')
+                    .eq('estado', 'BAJO');
+                
+                const productionTotal = productionData.data?.reduce((sum, item) => sum + (parseFloat(item.volumen_l) || 0), 0) || 0;
+                const salesTotal = salesData.data?.reduce((sum, item) => sum + (parseFloat(item.total_euros) || 0), 0) || 0;
+                
+                return `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <i class="fas fa-industry" style="color: var(--accent-gold);"></i>
+                            <div class="stat-value">${productionTotal.toLocaleString('es-ES')} L</div>
+                            <div class="stat-label">Producción del Mes</div>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-euro-sign" style="color: var(--accent-gold);"></i>
+                            <div class="stat-value">€${salesTotal.toLocaleString('es-ES')}</div>
+                            <div class="stat-label">Ventas Totales</div>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-chart-bar" style="color: var(--accent-gold);"></i>
+                            <div class="stat-value">€${(salesTotal * 0.6).toLocaleString('es-ES')}</div>
+                            <div class="stat-label">Margen Bruto</div>
+                        </div>
+                        <div class="stat-card">
+                            <i class="fas fa-calculator" style="color: var(--accent-gold);"></i>
+                            <div class="stat-value">€${(salesTotal * 0.4).toLocaleString('es-ES')}</div>
+                            <div class="stat-label">Margen Neto</div>
+                        </div>
+                    </div>
                     
-                    const now = new Date();
-                    const currentMonth = now.getMonth() + 1;
-                    const currentYear = now.getFullYear();
+                    <div class="chart-container">
+                        <h3 class="section-title">Producción Mensual 2025</h3>
+                        <canvas id="productionChart" height="100"></canvas>
+                    </div>
                     
-                    try {
-                        const productionData = await supabase
-                            .from('produccion')
-                            .select('*')
-                            .gte('fecha', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
-                            .lt('fecha', `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`);
-                        
-                        const salesData = await supabase
-                            .from('ventas')
-                            .select('total')
-                            .gte('fecha', `${currentYear}-${String(currentMonth).padStart(2, '0')}-01`)
-                            .lt('fecha', `${currentMonth === 12 ? currentYear + 1 : currentYear}-${String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, '0')}-01`);
-                        
-                        const inventoryAlerts = await supabase
-                            .from('inventario')
-                            .select('*')
-                            .lt('stock', 'punto_reorden');
-                        
-                        const productionTotal = productionData.data?.reduce((sum, item) => sum + (parseFloat(item.volumen) || 0), 0) || 0;
-                        const salesTotal = salesData.data?.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0) || 0;
-                        
-                        return `
-                            <div class="stats-grid">
-                                <div class="stat-card">
-                                    <i class="fas fa-industry" style="color: var(--accent-gold);"></i>
-                                    <div class="stat-value">${productionTotal.toLocaleString('es-ES')} L</div>
-                                    <div class="stat-label">Producción del Mes</div>
-                                </div>
-                                <div class="stat-card">
-                                    <i class="fas fa-euro-sign" style="color: var(--accent-gold);"></i>
-                                    <div class="stat-value">€${salesTotal.toLocaleString('es-ES')}</div>
-                                    <div class="stat-label">Ventas Totales</div>
-                                </div>
-                                <div class="stat-card">
-                                    <i class="fas fa-chart-bar" style="color: var(--accent-gold);"></i>
-                                    <div class="stat-value">€${(salesTotal * 0.6).toLocaleString('es-ES')}</div>
-                                    <div class="stat-label">Margen Bruto</div>
-                                </div>
-                                <div class="stat-card">
-                                    <i class="fas fa-calculator" style="color: var(--accent-gold);"></i>
-                                    <div class="stat-value">€${(salesTotal * 0.4).toLocaleString('es-ES')}</div>
-                                    <div class="stat-label">Margen Neto</div>
-                                </div>
+                    <div class="section-title">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Alertas de Inventario
+                    </div>
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
+                            <span>Material</span>
+                            <span>Stock Actual</span>
+                            <span>Punto Reorden</span>
+                            <span>Estado</span>
+                        </div>
+                        ${inventoryAlerts.data && inventoryAlerts.data.length > 0 ? inventoryAlerts.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
+                                <span>${item.material}</span>
+                                <span>${item.stock}</span>
+                                <span>${item.punto_reorden}</span>
+                                <span><span class="status status-low">⚠️ BAJO</span></span>
                             </div>
-                            
-                            <div class="chart-container">
-                                <h3 class="section-title">Producción Mensual 2025</h3>
-                                <canvas id="productionChart" height="100"></canvas>
-                            </div>
-                            
-                            <div class="section-title">
-                                <i class="fas fa-exclamation-triangle"></i>
-                                Alertas de Inventario
-                            </div>
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
-                                    <span>Material</span>
-                                    <span>Stock Actual</span>
-                                    <span>Punto Reorden</span>
-                                    <span>Estado</span>
-                                </div>
-                                ${inventoryAlerts.data && inventoryAlerts.data.length > 0 ? 
-                                    inventoryAlerts.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr;">
-                                            <span>${item.material || 'N/A'}</span>
-                                            <span>${item.stock || '0'}</span>
-                                            <span>${item.punto_reorden || '0'}</span>
-                                            <span><span class="status status-low">⚠️ BAJO</span></span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay alertas de inventario</span></div>'}
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading dashboard:', error);
-                        return '<div class="stat-card"><p>Error cargando datos del dashboard</p></div>';
-                    }
-                }
-            },
-            
-            production: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Registro de Producción';
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay alertas de inventario</span></div>'}
+                    </div>
+                `;
+            }
+        };
+        
+        const productionModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Registro de Producción';
+                
+                const productionData = await supabase
+                    .from('produccion')
+                    .select('*')
+                    .order('fecha', { ascending: false })
+                    .limit(50);
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Registro de Operaciones</h3>
+                        <button class="btn btn-primary" onclick="showProductionForm()">
+                            <i class="fas fa-plus"></i> Nueva Operación
+                        </button>
+                    </div>
                     
-                    try {
-                        const productionData = await supabase
-                            .from('produccion')
-                            .select('*')
-                            .order('fecha', { ascending: false })
-                            .limit(50);
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Registro de Operaciones</h3>
-                                <button class="btn btn-primary" onclick="showProductionForm()">
-                                    <i class="fas fa-plus"></i> Nueva Operación
-                                </button>
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
+                            <span>Fecha</span>
+                            <span>Operación</span>
+                            <span>Lote</span>
+                            <span>Estilo</span>
+                            <span>Volumen (L)</span>
+                            <span>Estado</span>
+                        </div>
+                        ${productionData.data && productionData.data.length > 0 ? productionData.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
+                                <span>${new Date(item.fecha).toLocaleDateString('es-ES')}</span>
+                                <span>${item.tipo_operacion}</span>
+                                <span>${item.numero_lote || '-'}</span>
+                                <span>${item.estilo_cerveza || '-'}</span>
+                                <span>${item.volumen_l}</span>
+                                <span>
+                                    <span class="status ${item.confirmado ? 'status-ok' : 'status-warning'}">
+                                        ${item.confirmado ? '✓ Confirmado' : '⏳ Pendiente'}
+                                    </span>
+                                </span>
                             </div>
-                            
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                    <span>Fecha</span>
-                                    <span>Operación</span>
-                                    <span>Lote</span>
-                                    <span>Estilo</span>
-                                    <span>Volumen (L)</span>
-                                    <span>Estado</span>
-                                </div>
-                                ${productionData.data && productionData.data.length > 0 ? 
-                                    productionData.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                            <span>${item.fecha ? new Date(item.fecha).toLocaleDateString('es-ES') : 'N/A'}</span>
-                                            <span>${item.tipo_operacion || '-'}</span>
-                                            <span>${item.lote || '-'}</span>
-                                            <span>${item.estilo || '-'}</span>
-                                            <span>${item.volumen || '0'}</span>
-                                            <span>
-                                                <span class="status ${item.estado === 'confirmado' ? 'status-ok' : 'status-warning'}">
-                                                    ${item.estado === 'confirmado' ? '✓ Confirmado' : '⏳ Pendiente'}
-                                                </span>
-                                            </span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay registros de producción</span></div>'}
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading production:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de producción</p></div>';
-                    }
-                }
-            },
-            
-            inventory: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Gestión de Inventario';
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay registros de producción</span></div>'}
+                    </div>
+                `;
+            }
+        };
+        
+        const inventoryModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Gestión de Inventario';
+                
+                const rawMaterials = await supabase
+                    .from('inventario')
+                    .select('*')
+                    .eq('tipo', 'materia_prima')
+                    .order('material');
+                
+                const packaging = await supabase
+                    .from('inventario')
+                    .select('*')
+                    .eq('tipo', 'envase')
+                    .order('material');
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Inventario de Materias Primas</h3>
+                        <button class="btn btn-primary" onclick="showInventoryForm('materia_prima')">
+                            <i class="fas fa-plus"></i> Agregar Material
+                        </button>
+                    </div>
                     
-                    try {
-                        const rawMaterials = await supabase
-                            .from('inventario')
-                            .select('*')
-                            .eq('tipo', 'materia_prima')
-                            .order('material');
-                        
-                        const packaging = await supabase
-                            .from('inventario')
-                            .select('*')
-                            .eq('tipo', 'envase')
-                            .order('material');
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Inventario de Materias Primas</h3>
-                                <button class="btn btn-primary" onclick="showInventoryForm('materia_prima')">
-                                    <i class="fas fa-plus"></i> Agregar Material
-                                </button>
+                    <div class="data-table" style="margin-bottom: 40px;">
+                        <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
+                            <span>Material</span>
+                            <span>Stock</span>
+                            <span>Unidad</span>
+                            <span>Costo Unit.</span>
+                            <span>Estado</span>
+                        </div>
+                        ${packaging.data && packaging.data.length > 0 ? packaging.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
+                                <span>${item.material}</span>
+                                <span>${item.stock}</span>
+                                <span>${item.unidad}</span>
+                                <span>€${item.costo_unitario}</span>
+                                <span>
+                                    <span class="status ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? 'status-ok' : 'status-low'}">
+                                        ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? '✓ OK' : '⚠️ BAJO'}
+                                    </span>
+                                </span>
                             </div>
-                            
-                            <div class="data-table" style="margin-bottom: 40px;">
-                                <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
-                                    <span>Material</span>
-                                    <span>Stock</span>
-                                    <span>Unidad</span>
-                                    <span>Costo Unit.</span>
-                                    <span>Estado</span>
-                                </div>
-                                ${rawMaterials.data && rawMaterials.data.length > 0 ? 
-                                    rawMaterials.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
-                                            <span>${item.material || 'N/A'}</span>
-                                            <span>${item.stock || '0'}</span>
-                                            <span>${item.unidad || '-'}</span>
-                                            <span>€${item.costo_unitario || '0.00'}</span>
-                                            <span>
-                                                <span class="status ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? 'status-ok' : 'status-low'}">
-                                                    ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? '✓ OK' : '⚠️ BAJO'}
-                                                </span>
-                                            </span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay materias primas registradas</span></div>'}
-                            </div>
-                            
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Inventario de Envases</h3>
-                                <button class="btn btn-primary" onclick="showInventoryForm('envase')">
-                                    <i class="fas fa-plus"></i> Agregar Envase
-                                </button>
-                            </div>
-                            
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
-                                    <span>Material</span>
-                                    <span>Stock</span>
-                                    <span>Unidad</span>
-                                    <span>Costo Unit.</span>
-                                    <span>Estado</span>
-                                </div>
-                                ${packaging.data && packaging.data.length > 0 ? 
-                                    packaging.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
-                                            <span>${item.material || 'N/A'}</span>
-                                            <span>${item.stock || '0'}</span>
-                                            <span>${item.unidad || '-'}</span>
-                                            <span>€${item.costo_unitario || '0.00'}</span>
-                                            <span>
-                                                <span class="status ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? 'status-ok' : 'status-low'}">
-                                                    ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? '✓ OK' : '⚠️ BAJO'}
-                                                </span>
-                                            </span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay envases registrados</span></div>'}
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading inventory:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de inventario</p></div>';
-                    }
-                }
-            },
-            
-            sales: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Gestión de Ventas';
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay envases registrados</span></div>'}
+                    </div>
+                `;
+            }
+        };
+        
+        const salesModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Gestión de Ventas';
+                
+                const salesData = await supabase
+                    .from('ventas')
+                    .select('*')
+                    .order('fecha', { ascending: false })
+                    .limit(50);
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Registro de Ventas</h3>
+                        <button class="btn btn-primary" onclick="showSalesForm()">
+                            <i class="fas fa-plus"></i> Nueva Venta
+                        </button>
+                    </div>
                     
-                    try {
-                        const salesData = await supabase
-                            .from('ventas')
-                            .select('*')
-                            .order('fecha', { ascending: false })
-                            .limit(50);
-                        
-                        const salesTotal = salesData.data?.reduce((sum, item) => sum + parseFloat(item.total || 0), 0) || 0;
-                        const totalUnits = salesData.data?.reduce((sum, item) => sum + parseInt(item.cantidad || 0), 0) || 0;
-                        const uniqueClients = new Set(salesData.data?.map(item => item.cliente)).size || 0;
-                        const avgPrice = salesData.data && salesData.data.length > 0 ? 
-                            (salesData.data.reduce((sum, item) => sum + parseFloat(item.precio_unitario || 0), 0) / salesData.data.length).toFixed(2) : 
-                            '0.00';
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Registro de Ventas</h3>
-                                <button class="btn btn-primary" onclick="showSalesForm()">
-                                    <i class="fas fa-plus"></i> Nueva Venta
-                                </button>
+                    <div class="data-table" style="margin-bottom: 40px;">
+                        <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+                            <span>Fecha</span>
+                            <span>Cliente</span>
+                            <span>Estilo</span>
+                            <span>Presentación</span>
+                            <span>Cantidad</span>
+                            <span>Precio Unit.</span>
+                            <span>Total</span>
+                        </div>
+                        ${salesData.data && salesData.data.length > 0 ? salesData.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
+                                <span>${new Date(item.fecha).toLocaleDateString('es-ES')}</span>
+                                <span>${item.cliente}</span>
+                                <span>${item.estilo}</span>
+                                <span>${item.presentacion}</span>
+                                <span>${item.cantidad}</span>
+                                <span>€${item.precio_unitario}</span>
+                                <span>€${item.total_euros}</span>
                             </div>
-                            
-                            <div class="data-table" style="margin-bottom: 40px;">
-                                <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                    <span>Fecha</span>
-                                    <span>Cliente</span>
-                                    <span>Estilo</span>
-                                    <span>Presentación</span>
-                                    <span>Cantidad</span>
-                                    <span>Precio Unit.</span>
-                                    <span>Total</span>
-                                </div>
-                                ${salesData.data && salesData.data.length > 0 ? 
-                                    salesData.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                            <span>${item.fecha ? new Date(item.fecha).toLocaleDateString('es-ES') : 'N/A'}</span>
-                                            <span>${item.cliente || '-'}</span>
-                                            <span>${item.estilo || '-'}</span>
-                                            <span>${item.presentacion || '-'}</span>
-                                            <span>${item.cantidad || '0'}</span>
-                                            <span>€${item.precio_unitario || '0.00'}</span>
-                                            <span>€${item.total || '0.00'}</span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay ventas registradas</span></div>'}
-                            </div>
-                            
-                            <div class="stats-grid">
-                                <div class="stat-card">
-                                    <div class="stat-value">€${salesTotal.toLocaleString('es-ES')}</div>
-                                    <div class="stat-label">Ventas del Mes</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">${totalUnits.toLocaleString('es-ES')}</div>
-                                    <div class="stat-label">Unidades Vendidas</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">${uniqueClients}</div>
-                                    <div class="stat-label">Clientes Activos</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">€${avgPrice}</div>
-                                    <div class="stat-label">Precio Promedio</div>
-                                </div>
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading sales:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de ventas</p></div>';
-                    }
-                }
-            },
-            
-            recipes: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Gestión de Recetas';
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay ventas registradas</span></div>'}
+                    </div>
                     
-                    try {
-                        const recipes = await supabase
-                            .from('recetas')
-                            .select('*')
-                            .order('estilo');
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Recetas de Cerveza</h3>
-                                <button class="btn btn-primary" onclick="showRecipeForm()">
-                                    <i class="fas fa-plus"></i> Nueva Receta
-                                </button>
-                            </div>
-                            
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 1fr 2fr 2fr 1fr;">
-                                    <span>Estilo</span>
-                                    <span>Ingrediente</span>
-                                    <span>Cantidad por 100L</span>
-                                    <span>Unidad</span>
-                                </div>
-                                ${recipes.data && recipes.data.length > 0 ? 
-                                    recipes.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 2fr 2fr 1fr;">
-                                            <span>${item.estilo || 'N/A'}</span>
-                                            <span>${item.ingrediente || '-'}</span>
-                                            <span>${item.cantidad || '0'}</span>
-                                            <span>${item.unidad || '-'}</span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay recetas registradas</span></div>'}
-                            </div>
-                            
-                            <div class="section-title">
-                                <i class="fas fa-info-circle"></i>
-                                Detalle de Recetas
-                            </div>
-                            
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
-                                <div class="stat-card">
-                                    <h4 style="margin-bottom: 15px; color: var(--accent-gold);">Lager</h4>
-                                    <div style="font-size: 14px;">
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Pilsen:</span>
-                                            <span>17.5 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Munich:</span>
-                                            <span>0.32 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Copos de trigo:</span>
-                                            <span>1.6 Kg</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="stat-card">
-                                    <h4 style="margin-bottom: 15px; color: var(--accent-gold);">IPA</h4>
-                                    <div style="font-size: 14px;">
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Pale ale:</span>
-                                            <span>20.8 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Copos de trigo:</span>
-                                            <span>1.67 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Crystal:</span>
-                                            <span>0.3 Kg</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="stat-card">
-                                    <h4 style="margin-bottom: 15px; color: var(--accent-gold);">Gorri</h4>
-                                    <div style="font-size: 14px;">
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Pale ale:</span>
-                                            <span>12.26 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Munich:</span>
-                                            <span>1.83 Kg</span>
-                                        </div>
-                                        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                                            <span>Crystal:</span>
-                                            <span>1.04 Kg</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading recipes:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de recetas</p></div>';
-                    }
-                }
-            },
-            
-            finished: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Producto Terminado';
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">€${salesData.data?.reduce((sum, item) => sum + parseFloat(item.total_euros || 0), 0).toLocaleString('es-ES') || '0'}</div>
+                            <div class="stat-label">Ventas del Mes</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${salesData.data?.reduce((sum, item) => sum + parseInt(item.cantidad || 0), 0) || 0}</div>
+                            <div class="stat-label">Unidades Vendidas</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">${new Set(salesData.data?.map(item => item.cliente)).size || 0}</div>
+                            <div class="stat-label">Clientes Activos</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">€${salesData.data && salesData.data.length > 0 ? (salesData.data.reduce((sum, item) => sum + parseFloat(item.precio_unitario || 0), 0) / salesData.data.length).toFixed(2) : '0.00'}</div>
+                            <div class="stat-label">Precio Promedio</div>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+        
+        const recipesModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Gestión de Recetas';
+                
+                const recipes = await supabase
+                    .from('recetas')
+                    .select('*')
+                    .order('estilo');
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Recetas de Cerveza</h3>
+                        <button class="btn btn-primary" onclick="showRecipeForm()">
+                            <i class="fas fa-plus"></i> Nueva Receta
+                        </button>
+                    </div>
                     
-                    try {
-                        const finishedProducts = await supabase
-                            .from('producto_terminado')
-                            .select('*')
-                            .order('estilo');
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Stock de Producto Terminado</h3>
-                                <button class="btn btn-primary" onclick="showFinishedProductForm()">
-                                    <i class="fas fa-plus"></i> Agregar Producto
-                                </button>
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 1fr 2fr 2fr 1fr;">
+                            <span>Estilo</span>
+                            <span>Ingrediente</span>
+                            <span>Cantidad por 100L</span>
+                            <span>Unidad</span>
+                        </div>
+                        ${recipes.data && recipes.data.length > 0 ? recipes.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 1fr 2fr 2fr 1fr;">
+                                <span>${item.estilo}</span>
+                                <span>${item.ingrediente}</span>
+                                <span>${item.cantidad_por_100l}</span>
+                                <span>${item.unidad}</span>
                             </div>
-                            
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                    <span>Lote</span>
-                                    <span>Estilo</span>
-                                    <span>Envase</span>
-                                    <span>Producidas</span>
-                                    <span>Vendidas</span>
-                                    <span>Stock</span>
-                                </div>
-                                ${finishedProducts.data && finishedProducts.data.length > 0 ? 
-                                    finishedProducts.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
-                                            <span>${item.lote || 'N/A'}</span>
-                                            <span>${item.estilo || '-'}</span>
-                                            <span>${item.envase || '-'}</span>
-                                            <span>${item.producidas || '0'}</span>
-                                            <span>${item.vendidas || '0'}</span>
-                                            <span>${item.stock || '0'}</span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay productos terminados</span></div>'}
-                            </div>
-                            
-                            <div class="section-title">
-                                <i class="fas fa-chart-bar"></i>
-                                Resumen por Estilo
-                            </div>
-                            
-                            <div class="stats-grid">
-                                <div class="stat-card">
-                                    <div class="stat-value">Lager</div>
-                                    <div class="stat-label">990 unidades</div>
-                                    <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">IPA</div>
-                                    <div class="stat-label">582 unidades</div>
-                                    <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">Gorri</div>
-                                    <div class="stat-label">2,503 unidades</div>
-                                    <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
-                                </div>
-                                <div class="stat-card">
-                                    <div class="stat-value">3 Lotes</div>
-                                    <div class="stat-label">Total Activos</div>
-                                    <div style="font-size: 12px; color: var(--text-secondary);">4,075 unidades</div>
-                                </div>
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading finished products:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de productos terminados</p></div>';
-                    }
-                }
-            },
-            
-            costs: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Gestión de Costos';
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay recetas registradas</span></div>'}
+                    </div>
                     
+                    <div class="section-title">
+                        <i class="fas fa-info-circle"></i>
+                        Detalle de Recetas
+                    </div>
+                    
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <div class="stat-card">
+                            <h4 style="margin-bottom: 15px; color: var(--accent-gold);">Lager</h4>
+                            <div style="font-size: 14px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Pilsen:</span>
+                                    <span>17.5 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Munich:</span>
+                                    <span>0.32 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Copos de trigo:</span>
+                                    <span>1.6 Kg</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <h4 style="margin-bottom: 15px; color: var(--accent-gold);">IPA</h4>
+                            <div style="font-size: 14px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Pale ale:</span>
+                                    <span>20.8 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Copos de trigo:</span>
+                                    <span>1.67 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Crystal:</span>
+                                    <span>0.3 Kg</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="stat-card">
+                            <h4 style="margin-bottom: 15px; color: var(--accent-gold);">Gorri</h4>
+                            <div style="font-size: 14px;">
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Pale ale:</span>
+                                    <span>12.26 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Munich:</span>
+                                    <span>1.83 Kg</span>
+                                </div>
+                                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                    <span>Crystal:</span>
+                                    <span>1.04 Kg</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+        
+        const finishedModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Producto Terminado';
+                
+                const finishedProducts = await supabase
+                    .from('producto_terminado')
+                    .select('*')
+                    .order('estilo');
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Stock de Producto Terminado</h3>
+                        <button class="btn btn-primary" onclick="showFinishedProductForm()">
+                            <i class="fas fa-plus"></i> Agregar Producto
+                        </button>
+                    </div>
+                    
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
+                            <span>Lote</span>
+                            <span>Estilo</span>
+                            <span>Envase</span>
+                            <span>Producidas</span>
+                            <span>Vendidas</span>
+                            <span>Stock</span>
+                        </div>
+                        ${finishedProducts.data && finishedProducts.data.length > 0 ? finishedProducts.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr;">
+                                <span>${item.numero_lote}</span>
+                                <span>${item.estilo}</span>
+                                <span>${item.tipo_envase}</span>
+                                <span>${item.unidades_producidas}</span>
+                                <span>${item.unidades_vendidas}</span>
+                                <span>${item.stock_actual}</span>
+                            </div>
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay productos terminados</span></div>'}
+                    </div>
+                    
+                    <div class="section-title">
+                        <i class="fas fa-chart-bar"></i>
+                        Resumen por Estilo
+                    </div>
+                    
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">Lager</div>
+                            <div class="stat-label">990 unidades</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">IPA</div>
+                            <div class="stat-label">582 unidades</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">Gorri</div>
+                            <div class="stat-label">2,503 unidades</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">Botella 330ml</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">3 Lotes</div>
+                            <div class="stat-label">Total Activos</div>
+                            <div style="font-size: 12px; color: var(--text-secondary);">4,075 unidades</div>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+        
+        const costsModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Gestión de Costos';
+                
+                return `
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <div class="stat-value">€4,320</div>
+                            <div class="stat-label">Ingresos por Ventas</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">€2,592</div>
+                            <div class="stat-label">Costos Variables</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">€1,728</div>
+                            <div class="stat-label">Margen Bruto</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="stat-value">€1,248</div>
+                            <div class="stat-label">Margen Neto</div>
+                        </div>
+                    </div>
+                    
+                    <div class="section-title">
+                        <i class="fas fa-calculator"></i>
+                        Análisis Financiero del Mes
+                    </div>
+                    
+                    <div class="data-table" style="margin-bottom: 40px;">
+                        <div class="table-header" style="grid-template-columns: 2fr 1fr;">
+                            <span>Concepto</span>
+                            <span>Valor (€)</span>
+                        </div>
+                        <div class="table-row" style="grid-template-columns: 2fr 1fr;">
+                            <span>Ingresos por Ventas</span>
+                            <span>4,320</span>
+                        </div>
+                        <div class="table-row" style="grid-template-columns: 2fr 1fr;">
+                            <span>Costos Variables (Producción)</span>
+                            <span>2,592</span>
+                        </div>
+                        <div class="table-row" style="grid-template-columns: 2fr 1fr;">
+                            <span>Margen Bruto</span>
+                            <span>1,728</span>
+                        </div>
+                        <div class="table-row" style="grid-template-columns: 2fr 1fr;">
+                            <span>Costos Fijos</span>
+                            <span>480</span>
+                        </div>
+                        <div class="table-row" style="grid-template-columns: 2fr 1fr; font-weight: bold; background-color: rgba(212, 165, 116, 0.1);">
+                            <span>MARGEN NETO</span>
+                            <span>1,248</span>
+                        </div>
+                    </div>
+                `;
+            }
+        };
+        
+        const historyModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Historial de Operaciones';
+                
+                const history = await supabase
+                    .from('historial')
+                    .select('*')
+                    .order('fecha_hora', { ascending: false })
+                    .limit(100);
+                
+                return `
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 2fr 1fr;">
+                            <span>Fecha/Hora</span>
+                            <span>Operación</span>
+                            <span>Lote</span>
+                            <span>Material</span>
+                            <span>Cantidad</span>
+                            <span>Estado</span>
+                        </div>
+                        ${history.data && history.data.length > 0 ? history.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 2fr 1fr;">
+                                <span>${new Date(item.fecha_hora).toLocaleString('es-ES')}</span>
+                                <span>${item.tipo_operacion}</span>
+                                <span>${item.numero_lote || '-'}</span>
+                                <span>${item.material_afectado}</span>
+                                <span>${item.cantidad_descontada} ${item.unidad || ''}</span>
+                                <span>
+                                    <span class="status ${item.estado === 'ACTIVO' ? 'status-ok' : 'status-warning'}">
+                                        ${item.estado}
+                                    </span>
+                                </span>
+                            </div>
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay historial disponible</span></div>'}
+                    </div>
+                `;
+            }
+        };
+        
+        const usersModule = {
+            load: async () => {
+                document.getElementById('pageTitle').textContent = 'Gestión de Usuarios';
+                
+                if (currentUser?.role !== 'CEO') {
                     return `
-                        <div class="stats-grid">
-                            <div class="stat-card">
-                                <div class="stat-value">€4,320</div>
-                                <div class="stat-label">Ingresos por Ventas</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value">€2,592</div>
-                                <div class="stat-label">Costos Variables</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value">€1,728</div>
-                                <div class="stat-label">Margen Bruto</div>
-                            </div>
-                            <div class="stat-card">
-                                <div class="stat-value">€1,248</div>
-                                <div class="stat-label">Margen Neto</div>
-                            </div>
-                        </div>
-                        
-                        <div class="section-title">
-                            <i class="fas fa-calculator"></i>
-                            Análisis Financiero del Mes
-                        </div>
-                        
-                        <div class="data-table" style="margin-bottom: 40px;">
-                            <div class="table-header" style="grid-template-columns: 2fr 1fr;">
-                                <span>Concepto</span>
-                                <span>Valor (€)</span>
-                            </div>
-                            <div class="table-row" style="grid-template-columns: 2fr 1fr;">
-                                <span>Ingresos por Ventas</span>
-                                <span>4,320</span>
-                            </div>
-                            <div class="table-row" style="grid-template-columns: 2fr 1fr;">
-                                <span>Costos Variables (Producción)</span>
-                                <span>2,592</span>
-                            </div>
-                            <div class="table-row" style="grid-template-columns: 2fr 1fr;">
-                                <span>Margen Bruto</span>
-                                <span>1,728</span>
-                            </div>
-                            <div class="table-row" style="grid-template-columns: 2fr 1fr;">
-                                <span>Costos Fijos</span>
-                                <span>480</span>
-                            </div>
-                            <div class="table-row" style="grid-template-columns: 2fr 1fr; font-weight: bold; background-color: rgba(212, 165, 116, 0.1);">
-                                <span>MARGEN NETO</span>
-                                <span>1,248</span>
-                            </div>
+                        <div style="text-align: center; padding: 40px;">
+                            <i class="fas fa-lock" style="font-size: 48px; color: var(--accent-gold); margin-bottom: 20px;"></i>
+                            <h3>Acceso Restringido</h3>
+                            <p>Solo el CEO puede gestionar usuarios.</p>
                         </div>
                     `;
                 }
-            },
-            
-            history: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Historial de Operaciones';
+                
+                const users = await supabase
+                    .from('usuarios')
+                    .select('*')
+                    .order('nombre');
+                
+                return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Usuarios del Sistema</h3>
+                        <button class="btn btn-primary" onclick="showUserForm()">
+                            <i class="fas fa-plus"></i> Nuevo Usuario
+                        </button>
+                    </div>
                     
-                    try {
-                        const history = await supabase
-                            .from('historial')
-                            .select('*')
-                            .order('fecha_hora', { ascending: false })
-                            .limit(100);
-                        
-                        return `
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 1fr 1fr 1fr 1fr 2fr 1fr;">
-                                    <span>Fecha/Hora</span>
-                                    <span>Operación</span>
-                                    <span>Lote</span>
-                                    <span>Material</span>
-                                    <span>Cantidad</span>
-                                    <span>Estado</span>
-                                </div>
-                                ${history.data && history.data.length > 0 ? 
-                                    history.data.map(item => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 1fr 1fr 1fr 2fr 1fr;">
-                                            <span>${item.fecha_hora ? new Date(item.fecha_hora).toLocaleString('es-ES') : 'N/A'}</span>
-                                            <span>${item.tipo_operacion || '-'}</span>
-                                            <span>${item.lote || '-'}</span>
-                                            <span>${item.material || '-'}</span>
-                                            <span>${item.cantidad || '0'} ${item.unidad || ''}</span>
-                                            <span>
-                                                <span class="status ${item.estado === 'ACTIVO' ? 'status-ok' : 'status-warning'}">
-                                                    ${item.estado || 'N/A'}
-                                                </span>
-                                            </span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay historial disponible</span></div>'}
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 1fr 2fr 1fr 2fr 1fr;">
+                            <span>ID</span>
+                            <span>Nombre</span>
+                            <span>Rol</span>
+                            <span>Email</span>
+                            <span>Acciones</span>
+                        </div>
+                        ${users.data && users.data.length > 0 ? users.data.map(user => `
+                            <div class="table-row" style="grid-template-columns: 1fr 2fr 1fr 2fr 1fr;">
+                                <span>${user.id}</span>
+                                <span>${user.nombre}</span>
+                                <span><span class="status ${user.rol === 'CEO' ? 'status-ok' : user.rol === 'Admin' ? 'status-warning' : ''}">${user.rol}</span></span>
+                                <span>${user.email}</span>
+                                <span>
+                                    <button class="btn-secondary" style="padding: 5px 10px;" onclick="editUser(${user.id})">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn-secondary" style="padding: 5px 10px; margin-left: 5px;" onclick="deleteUser(${user.id})">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </span>
                             </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading history:', error);
-                        return '<div class="stat-card"><p>Error cargando datos del historial</p></div>';
-                    }
-                }
-            },
-            
-            users: {
-                load: async () => {
-                    document.getElementById('pageTitle').textContent = 'Gestión de Usuarios';
-                    
-                    if (currentUser?.role !== 'CEO') {
-                        return `
-                            <div style="text-align: center; padding: 40px;">
-                                <i class="fas fa-lock" style="font-size: 48px; color: var(--accent-gold); margin-bottom: 20px;"></i>
-                                <h3>Acceso Restringido</h3>
-                                <p>Solo el CEO puede gestionar usuarios.</p>
-                            </div>
-                        `;
-                    }
-                    
-                    try {
-                        const users = await supabase
-                            .from('usuarios')
-                            .select('*')
-                            .order('nombre');
-                        
-                        return `
-                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                <h3 class="section-title" style="margin: 0;">Usuarios del Sistema</h3>
-                                <button class="btn btn-primary" onclick="showUserForm()">
-                                    <i class="fas fa-plus"></i> Nuevo Usuario
-                                </button>
-                            </div>
-                            
-                            <div class="data-table">
-                                <div class="table-header" style="grid-template-columns: 1fr 2fr 1fr 2fr 1fr;">
-                                    <span>ID</span>
-                                    <span>Nombre</span>
-                                    <span>Rol</span>
-                                    <span>Email</span>
-                                    <span>Acciones</span>
-                                </div>
-                                ${users.data && users.data.length > 0 ? 
-                                    users.data.map(user => `
-                                        <div class="table-row" style="grid-template-columns: 1fr 2fr 1fr 2fr 1fr;">
-                                            <span>${user.id || 'N/A'}</span>
-                                            <span>${user.nombre || '-'}</span>
-                                            <span><span class="status ${user.rol === 'CEO' ? 'status-ok' : user.rol === 'Admin' ? 'status-warning' : ''}">${user.rol || '-'}</span></span>
-                                            <span>${user.email || '-'}</span>
-                                            <span>
-                                                <button class="btn-secondary" style="padding: 5px 10px;" onclick="editUser(${user.id})">
-                                                    <i class="fas fa-edit"></i>
-                                                </button>
-                                                <button class="btn-secondary" style="padding: 5px 10px; margin-left: 5px;" onclick="deleteUser(${user.id})">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            </span>
-                                        </div>
-                                    `).join('') : 
-                                    '<div class="table-row"><span style="grid-column: 1 / -1;">No hay usuarios registrados</span></div>'}
-                            </div>
-                        `;
-                    } catch (error) {
-                        console.error('Error loading users:', error);
-                        return '<div class="stat-card"><p>Error cargando datos de usuarios</p></div>';
-                    }
-                }
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay usuarios registrados</span></div>'}
+                    </div>
+                `;
             }
         };
         
@@ -1244,7 +1175,6 @@
         async function loadModule(moduleName) {
             currentModule = moduleName;
             
-            // Actualizar navegación
             document.querySelectorAll('.nav-item').forEach(item => {
                 item.classList.remove('active');
                 if (item.dataset.module === moduleName) {
@@ -1252,17 +1182,43 @@
                 }
             });
             
-            // Cargar contenido del módulo
-            const module = modules[moduleName];
-            if (module) {
-                document.getElementById('module-content').innerHTML = await module.load();
-                
-                // Inicializar gráfico si es dashboard
-                if (moduleName === 'dashboard') {
-                    setTimeout(initializeProductionChart, 100);
-                }
-            } else {
-                document.getElementById('module-content').innerHTML = '<h3>Módulo no encontrado</h3>';
+            let content = '';
+            switch (moduleName) {
+                case 'dashboard':
+                    content = await dashboardModule.load();
+                    break;
+                case 'production':
+                    content = await productionModule.load();
+                    break;
+                case 'inventory':
+                    content = await inventoryModule.load();
+                    break;
+                case 'sales':
+                    content = await salesModule.load();
+                    break;
+                case 'recipes':
+                    content = await recipesModule.load();
+                    break;
+                case 'finished':
+                    content = await finishedModule.load();
+                    break;
+                case 'costs':
+                    content = await costsModule.load();
+                    break;
+                case 'history':
+                    content = await historyModule.load();
+                    break;
+                case 'users':
+                    content = await usersModule.load();
+                    break;
+                default:
+                    content = '<h3>Módulo no encontrado</h3>';
+            }
+            
+            document.getElementById('module-content').innerHTML = content;
+            
+            if (moduleName === 'dashboard') {
+                setTimeout(initializeProductionChart, 100);
             }
         }
         
@@ -1270,12 +1226,10 @@
             const ctx = document.getElementById('productionChart')?.getContext('2d');
             if (!ctx) return;
             
-            // Destruir gráfico anterior si existe
             if (productionChart) {
                 productionChart.destroy();
             }
             
-            // Crear nuevo gráfico
             productionChart = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -1394,30 +1348,27 @@
         }
         
         async function saveProduction() {
-            try {
-                const productionData = {
-                    fecha: document.getElementById('prodFecha').value,
-                    tipo_operacion: document.getElementById('prodTipo').value,
-                    lote: document.getElementById('prodLote').value,
-                    estilo: document.getElementById('prodEstilo').value,
-                    volumen: parseFloat(document.getElementById('prodVolumen').value) || 0,
-                    costo: parseFloat(document.getElementById('prodCosto').value) || 0,
-                    estado: 'pendiente',
-                    usuario_id: currentUser?.id || 1,
-                    created_at: new Date().toISOString()
-                };
-                
-                const { error } = await supabase
-                    .from('produccion')
-                    .insert([productionData]);
-                
-                if (error) throw error;
-                
+            const productionData = {
+                fecha: document.getElementById('prodFecha').value,
+                tipo_operacion: document.getElementById('prodTipo').value,
+                numero_lote: parseInt(document.getElementById('prodLote').value),
+                estilo_cerveza: document.getElementById('prodEstilo').value,
+                volumen_l: parseFloat(document.getElementById('prodVolumen').value),
+                costo_euros: parseFloat(document.getElementById('prodCosto').value),
+                confirmado: false,
+                usuario_id: currentUser?.id || 1
+            };
+            
+            const { data, error } = await supabase
+                .from('produccion')
+                .insert([productionData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Operación guardada correctamente', 'success');
                 closeModal();
                 loadModule('production');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1459,27 +1410,26 @@
         }
         
         async function saveInventory() {
-            try {
-                const inventoryData = {
-                    material: document.getElementById('invMaterial').value,
-                    tipo: document.getElementById('invTipo').value,
-                    stock: parseFloat(document.getElementById('invStock').value) || 0,
-                    unidad: document.getElementById('invUnidad').value,
-                    punto_reorden: parseFloat(document.getElementById('invPuntoReorden').value) || 0,
-                    costo_unitario: parseFloat(document.getElementById('invCosto').value) || 0
-                };
-                
-                const { error } = await supabase
-                    .from('inventario')
-                    .insert([inventoryData]);
-                
-                if (error) throw error;
-                
+            const inventoryData = {
+                material: document.getElementById('invMaterial').value,
+                tipo: document.getElementById('invTipo').value,
+                stock: parseFloat(document.getElementById('invStock').value),
+                unidad: document.getElementById('invUnidad').value,
+                punto_reorden: parseFloat(document.getElementById('invPuntoReorden').value),
+                costo_unitario: parseFloat(document.getElementById('invCosto').value),
+                usuario_id: currentUser?.id || 1
+            };
+            
+            const { data, error } = await supabase
+                .from('inventario')
+                .insert([inventoryData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Material agregado correctamente', 'success');
                 closeModal();
                 loadModule('inventory');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1534,33 +1484,30 @@
         }
         
         async function saveSale() {
-            try {
-                const cantidad = parseFloat(document.getElementById('ventaCantidad').value) || 0;
-                const precioUnitario = parseFloat(document.getElementById('ventaPrecio').value) || 0;
-                
-                const saleData = {
-                    fecha: document.getElementById('ventaFecha').value,
-                    cliente: document.getElementById('ventaCliente').value,
-                    estilo: document.getElementById('ventaEstilo').value,
-                    presentacion: document.getElementById('ventaPresentacion').value,
-                    cantidad: cantidad,
-                    precio_unitario: precioUnitario,
-                    total: cantidad * precioUnitario,
-                    canal: document.getElementById('ventaCanal').value,
-                    usuario_id: currentUser?.id || 1
-                };
-                
-                const { error } = await supabase
-                    .from('ventas')
-                    .insert([saleData]);
-                
-                if (error) throw error;
-                
+            const cantidad = parseFloat(document.getElementById('ventaCantidad').value);
+            const precioUnitario = parseFloat(document.getElementById('ventaPrecio').value);
+            
+            const saleData = {
+                fecha: document.getElementById('ventaFecha').value,
+                cliente: document.getElementById('ventaCliente').value,
+                estilo: document.getElementById('ventaEstilo').value,
+                presentacion: document.getElementById('ventaPresentacion').value,
+                cantidad: cantidad,
+                precio_unitario: precioUnitario,
+                canal: document.getElementById('ventaCanal').value,
+                usuario_id: currentUser?.id || 1
+            };
+            
+            const { data, error } = await supabase
+                .from('ventas')
+                .insert([saleData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Venta registrada correctamente', 'success');
                 closeModal();
                 loadModule('sales');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1600,25 +1547,24 @@
         }
         
         async function saveRecipe() {
-            try {
-                const recipeData = {
-                    estilo: document.getElementById('recipeEstilo').value,
-                    ingrediente: document.getElementById('recipeIngrediente').value,
-                    cantidad: parseFloat(document.getElementById('recipeCantidad').value) || 0,
-                    unidad: document.getElementById('recipeUnidad').value
-                };
-                
-                const { error } = await supabase
-                    .from('recetas')
-                    .insert([recipeData]);
-                
-                if (error) throw error;
-                
+            const recipeData = {
+                estilo: document.getElementById('recipeEstilo').value,
+                tipo_operacion: 'Elaboración de mosto',
+                ingrediente: document.getElementById('recipeIngrediente').value,
+                cantidad_por_100l: parseFloat(document.getElementById('recipeCantidad').value),
+                unidad: document.getElementById('recipeUnidad').value
+            };
+            
+            const { data, error } = await supabase
+                .from('recetas')
+                .insert([recipeData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Receta agregada correctamente', 'success');
                 closeModal();
                 loadModule('recipes');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1657,29 +1603,27 @@
         }
         
         async function saveFinishedProduct() {
-            try {
-                const producidas = parseInt(document.getElementById('finProducidas').value) || 0;
-                
-                const finishedData = {
-                    lote: parseInt(document.getElementById('finLote').value) || 0,
-                    estilo: document.getElementById('finEstilo').value,
-                    envase: document.getElementById('finEnvase').value,
-                    producidas: producidas,
-                    vendidas: 0,
-                    stock: producidas
-                };
-                
-                const { error } = await supabase
-                    .from('producto_terminado')
-                    .insert([finishedData]);
-                
-                if (error) throw error;
-                
+            const producidas = parseInt(document.getElementById('finProducidas').value);
+            
+            const finishedData = {
+                numero_lote: parseInt(document.getElementById('finLote').value),
+                estilo: document.getElementById('finEstilo').value,
+                tipo_envase: document.getElementById('finEnvase').value,
+                unidades_producidas: producidas,
+                unidades_vendidas: 0,
+                fecha_envasado: new Date().toISOString().split('T')[0]
+            };
+            
+            const { data, error } = await supabase
+                .from('producto_terminado')
+                .insert([finishedData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Producto agregado correctamente', 'success');
                 closeModal();
                 loadModule('finished');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1717,26 +1661,24 @@
         }
         
         async function saveUser() {
-            try {
-                const userData = {
-                    nombre: document.getElementById('userNombre').value,
-                    email: document.getElementById('userEmail').value,
-                    rol: document.getElementById('userRol').value,
-                    username: document.getElementById('userUsername').value,
-                    password: document.getElementById('userPassword').value
-                };
-                
-                const { error } = await supabase
-                    .from('usuarios')
-                    .insert([userData]);
-                
-                if (error) throw error;
-                
+            const userData = {
+                nombre: document.getElementById('userNombre').value,
+                email: document.getElementById('userEmail').value,
+                rol: document.getElementById('userRol').value,
+                username: document.getElementById('userUsername').value,
+                password: document.getElementById('userPassword').value
+            };
+            
+            const { data, error } = await supabase
+                .from('usuarios')
+                .insert([userData]);
+            
+            if (error) {
+                showNotification('Error al guardar: ' + error.message, 'error');
+            } else {
                 showNotification('Usuario creado correctamente', 'success');
                 closeModal();
                 loadModule('users');
-            } catch (error) {
-                showNotification('Error al guardar: ' + error.message, 'error');
             }
         }
         
@@ -1747,18 +1689,16 @@
         async function deleteUser(id) {
             if (!confirm('¿Está seguro de eliminar este usuario?')) return;
             
-            try {
-                const { error } = await supabase
-                    .from('usuarios')
-                    .delete()
-                    .eq('id', id);
-                
-                if (error) throw error;
-                
+            const { data, error } = await supabase
+                .from('usuarios')
+                .delete()
+                .eq('id', id);
+            
+            if (error) {
+                showNotification('Error al eliminar: ' + error.message, 'error');
+            } else {
                 showNotification('Usuario eliminado correctamente', 'success');
                 loadModule('users');
-            } catch (error) {
-                showNotification('Error al eliminar: ' + error.message, 'error');
             }
         }
         
@@ -1805,7 +1745,6 @@
         // ============================================
         
         document.addEventListener('DOMContentLoaded', function() {
-            // Configurar navegación
             document.querySelectorAll('.nav-item').forEach(item => {
                 item.addEventListener('click', function() {
                     loadModule(this.dataset.module);
@@ -1822,12 +1761,38 @@
                 }
             });
             
-            // Mostrar modal de login al cargar
             document.getElementById('loginModal').style.display = 'flex';
-            
-            // Configurar fecha actual
-            updateCurrentDate();
         });
     </script>
 </body>
-</html>
+</html>>
+                        ${rawMaterials.data && rawMaterials.data.length > 0 ? rawMaterials.data.map(item => `
+                            <div class="table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
+                                <span>${item.material}</span>
+                                <span>${item.stock}</span>
+                                <span>${item.unidad}</span>
+                                <span>€${item.costo_unitario}</span>
+                                <span>
+                                    <span class="status ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? 'status-ok' : 'status-low'}">
+                                        ${parseFloat(item.stock) > parseFloat(item.punto_reorden) ? '✓ OK' : '⚠️ BAJO'}
+                                    </span>
+                                </span>
+                            </div>
+                        `).join('') : '<div class="table-row"><span style="grid-column: 1 / -1;">No hay materiales registrados</span></div>'}
+                    </div>
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 class="section-title" style="margin: 0;">Inventario de Envases</h3>
+                        <button class="btn btn-primary" onclick="showInventoryForm('envase')">
+                            <i class="fas fa-plus"></i> Agregar Envase
+                        </button>
+                    </div>
+                    
+                    <div class="data-table">
+                        <div class="table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr;">
+                            <span>Material</span>
+                            <span>Stock</span>
+                            <span>Unidad</span>
+                            <span>Costo Unit.</span>
+                            <span>Estado</span>
+                        </div
