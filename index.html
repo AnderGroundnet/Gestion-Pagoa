@@ -430,9 +430,6 @@
                     <div id="userName">CEO</div>
                     <div style="font-size: 12px; color: var(--text-secondary);" id="userRole">Administrador</div>
                 </div>
-                <button class="btn-secondary" style="margin-left: auto; padding: 8px;" onclick="logout()">
-                    <i class="fas fa-sign-out-alt"></i>
-                </button>
             </div>
         </div>
         
@@ -463,26 +460,6 @@
             <div id="modalBody"></div>
         </div>
     </div>
-    
-    <!-- Login Modal -->
-    <div class="modal" id="loginModal" style="display: flex;">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2 class="modal-title">Iniciar Sesión</h2>
-            </div>
-            <div>
-                <div class="form-group">
-                    <label class="form-label">Usuario</label>
-                    <input type="text" id="loginUsername" class="form-input" placeholder="admin">
-                </div>
-                <div class="form-group">
-                    <label class="form-label">Contraseña</label>
-                    <input type="password" id="loginPassword" class="form-input" placeholder="••••••••">
-                </div>
-                <button class="btn btn-primary" onclick="login()" style="width: 100%;">Ingresar</button>
-            </div>
-        </div>
-    </div>
 
     <script>
         // ============================================
@@ -497,7 +474,13 @@
         // ============================================
         // ESTADO DE LA APLICACIÓN
         // ============================================
-        let currentUser = null;
+        // Usuario predeterminado (sin sistema de login)
+        const currentUser = {
+            id: 1,
+            name: 'CEO',
+            role: 'CEO'
+        };
+        
         let currentModule = 'dashboard';
         
         // ============================================
@@ -1170,16 +1153,6 @@
             load: async () => {
                 document.getElementById('pageTitle').textContent = 'Gestión de Usuarios';
                 
-                if (currentUser?.role !== 'CEO') {
-                    return `
-                        <div style="text-align: center; padding: 40px;">
-                            <i class="fas fa-lock" style="font-size: 48px; color: var(--accent-gold); margin-bottom: 20px;"></i>
-                            <h3>Acceso Restringido</h3>
-                            <p>Solo el CEO puede gestionar usuarios.</p>
-                        </div>
-                    `;
-                }
-                
                 const users = await supabase
                     .from('usuarios')
                     .select('*')
@@ -1500,46 +1473,6 @@
             showModal('Nueva Venta', form);
         }
         
-        // ============================================
-        // AUTENTICACIÓN Y USUARIOS
-        // ============================================
-        
-        // Simulación de usuarios (en producción usar Supabase Auth)
-        const mockUsers = [
-            { id: 1, username: 'admin', password: 'admin123', name: 'Administrador', role: 'Admin', email: 'admin@pagoa.com' },
-            { id: 2, username: 'ceo', password: 'ceo123', name: 'CEO Pagoa', role: 'CEO', email: 'ceo@pagoa.com' },
-            { id: 3, username: 'comercial', password: 'comercial123', name: 'Comercial', role: 'Comercial', email: 'comercial@pagoa.com' }
-        ];
-        
-        // Función de login
-        function login() {
-            const username = document.getElementById('loginUsername').value;
-            const password = document.getElementById('loginPassword').value;
-            
-            const user = mockUsers.find(u => u.username === username && u.password === password);
-            
-            if (user) {
-                currentUser = user;
-                document.getElementById('loginModal').style.display = 'none';
-                document.getElementById('userName').textContent = user.name;
-                document.getElementById('userRole').textContent = user.role;
-                document.getElementById('userAvatar').textContent = user.name.split(' ').map(n => n[0]).join('');
-                
-                // Cargar dashboard inicial
-                loadModule('dashboard');
-                updateCurrentDate();
-            } else {
-                alert('Usuario o contraseña incorrectos');
-            }
-        }
-        
-        // Función de logout
-        function logout() {
-            currentUser = null;
-            document.getElementById('loginModal').style.display = 'flex';
-            document.getElementById('module-content').innerHTML = '';
-        }
-        
         // Actualizar fecha actual
         function updateCurrentDate() {
             const now = new Date();
@@ -1570,15 +1503,14 @@
                 });
             });
             
-            // Mostrar login inicialmente
-            document.getElementById('loginModal').style.display = 'flex';
+            // Configurar usuario predeterminado
+            document.getElementById('userName').textContent = currentUser.name;
+            document.getElementById('userRole').textContent = currentUser.role;
+            document.getElementById('userAvatar').textContent = currentUser.name.split(' ').map(n => n[0]).join('');
             
-            // Para desarrollo: login automático
-            // setTimeout(() => {
-            //     document.getElementById('loginUsername').value = 'ceo';
-            //     document.getElementById('loginPassword').value = 'ceo123';
-            //     login();
-            // }, 100);
+            // Cargar dashboard inicial
+            loadModule('dashboard');
+            updateCurrentDate();
         });
         
         // ============================================
